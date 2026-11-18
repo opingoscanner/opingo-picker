@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "sheetUpdateMinutes": 30,
+  "updateNowRestMinutes": 5,
+  "backoffCapSeconds": 64,
+  "rowsPerRequest": 100
+}

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- Other sites see at most this page's address (never the part after #). Not "no-referrer": Google checks the Picker
+     key against this page's address, so the address itself must still be sent to Google. -->
+<meta name="referrer" content="strict-origin">
+<title>Choose a sheet for Opingo</title>
+<style>
+  :root { --ink: #1f2a44; --muted: #5f6b85; --bg: #f4f7fc; --card: #ffffff; --accent: #2f5bea; --ok: #1f9d63; --bad: #c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #eceffa; --muted: #9aa2bd; --bg: #141828; --card: #1a1e31; --accent: #7b9bff; --ok: #43c88a; --bad: #ff7a6b; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5; }
+  main { max-width: 520px; margin: 0 auto; padding: 32px 20px 48px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { margin: 8px 0; color: var(--muted); }
+  .card { background: var(--card); border-radius: 14px; padding: 18px; margin-top: 18px; }
+  button, a.btn { display: block; width: 100%; text-align: center; text-decoration: none; padding: 14px 16px; border-radius: 12px; border: 0; font-size: 16px; font-weight: 600; cursor: pointer; background: var(--accent); color: #fff; margin-top: 14px; }
+  a.quiet { background: transparent; color: var(--muted); font-weight: 500; }
+  .ok { color: var(--ok); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  .name { font-size: 18px; font-weight: 700; color: var(--ink); word-break: break-word; }
+  small { color: var(--muted); display: block; margin-top: 14px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Choose a sheet for Opingo</h1>
+  <p>Pick the Google spreadsheet your cards should go into, including one someone shared with you.</p>
+
+  <div class="card" id="start" hidden>
+    <p id="who"></p>
+    <button id="go" type="button">Sign in with Google and choose a sheet</button>
+    <a class="btn quiet" id="cancel" href="#">Cancel and go back to Opingo</a>
+    <small>Google will ask to let Opingo use the sheet you choose. Opingo can only open that sheet, not the rest of your Drive.</small>
+  </div>
+
+  <div class="card" id="done" hidden>
+    <p class="ok">Sheet chosen</p>
+    <p class="name" id="picked"></p>
+    <a class="btn" id="back" href="#">Back to Opingo</a>
+    <a class="btn quiet" id="again" href="#">Choose a different sheet</a>
+  </div>
+
+  <div class="card" id="problem" hidden>
+    <p class="bad" id="problemText"></p>
+  </div>
+
+  <small>Google handles your sign-in. Your temporary Google access is used only in this browser page to show your spreadsheets, and is never stored or sent to Opingo. Only the chosen sheet's name and ID are handed back to the Opingo app. This page has no Opingo server and no analytics; it is a plain page loaded from our website, with Google's sign-in and picker.</small>
+</main>
+
+<script>
+  // The same Google Web client and project number the Opingo app already uses (lib/config/google_config.dart).
+  var CLIENT_ID = '618917002142-kf1ui4t84tg7asehvktrpbe7snos1lk0.apps.googleusercontent.com';
+  var PROJECT_NUMBER = '618917002142';
+  // The Google Picker key (restricted to the Picker API and to this page's address in Google Cloud). Not a secret.
+  var PICKER_KEY = 'PASTE_YOUR_PICKER_KEY_HERE';
+  var ANDROID_PACKAGE = 'com.opingoscanner.app';
+  var SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+  // The app puts its one-time code and the account hint after "#", which browsers never send to any server (so they are not
+  // in the website's logs). Older app versions put them after "?": still read. Either way they are then removed from the
+  // address bar and this page's history entry.
+  var raw = window.location.hash.length > 1 ? window.location.hash.substring(1) : window.location.search.substring(1);
+  var params = new URLSearchParams(raw);
+  var state = params.get('state') || '';
+  var hint = params.get('hint') || '';
+  try { if (raw) history.replaceState(null, '', window.location.pathname); } catch (e) {}
+  var validState = /^[A-Za-z0-9_-]{16,80}$/.test(state);
+  var validHint = /^[^@\s]{1,64}@[^@\s]{1,255}$/.test(hint) ? hint : '';
+
+  function $(id) { return document.getElementById(id); }
+  function show(id) { ['start', 'done', 'problem'].forEach(function (x) { $(x).hidden = (x !== id); }); }
+  function problem(text) { $('problemText').textContent = text; show('problem'); }
+
+  // The link that opens the Opingo app again. Android needs an "intent" link from a web page; others use the plain one.
+  function appLink(kind, extra) {
+    var query = 'state=' + encodeURIComponent(state) + (extra || '');
+    if (/Android/i.test(navigator.userAgent)) {
+      return 'intent://' + kind + '?' + query + '#Intent;scheme=opingo;package=' + ANDROID_PACKAGE + ';end';
+    }
+    return 'opingo://' + kind + '?' + query;
+  }
+
+  var pickerReady = false;
+  function loadGoogle() {
+    var a = document.createElement('script');
+    a.src = 'https://accounts.google.com/gsi/client';
+    var b = document.createElement('script');
+    b.src = 'https://apis.google.com/js/api.js';
+    b.onload = function () { gapi.load('picker', function () { pickerReady = true; }); };
+    document.head.appendChild(a);
+    document.head.appendChild(b);
+  }
+
+  function openPicker(token) {
+    var shared = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS).setOwnedByMe(false);
+    var mine = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS).setOwnedByMe(true);
+    new google.picker.PickerBuilder()
+      .addView(shared).addView(mine)
+      .setOAuthToken(token).setDeveloperKey(PICKER_KEY).setAppId(PROJECT_NUMBER)
+      .setOrigin(window.location.protocol + '//' + window.location.host)
+      .setTitle('Choose a sheet for your cards')
+      .setCallback(function (data) {
+        if (data.action === google.picker.Action.PICKED && data.docs && data.docs.length) {
+          var d = data.docs[0];
+          var name = String(d.name || '').slice(0, 80);
+          $('picked').textContent = name || 'Untitled spreadsheet';
+          var link = appLink('picked', '&id=' + encodeURIComponent(d.id) + '&name=' + encodeURIComponent(name));
+          $('back').href = link;
+          show('done');
+          // Try to go straight back. If the phone blocks that, the button above does it.
+          window.location.href = link;
+        } else if (data.action === google.picker.Action.CANCEL) {
+          show('start');
+        }
+      })
+      .build().setVisible(true);
+  }
+
+  function choose() {
+    if (!pickerReady || !window.google || !google.accounts) { $('who').textContent = 'Google is still loading. Wait a second and tap the button again.'; return; }
+    var client = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+      login_hint: validHint || undefined,
+      callback: function (resp) {
+        if (resp.error) { problem('Google said: ' + resp.error + '. Go back to Opingo and try again.'); return; }
+        openPicker(resp.access_token);
+      },
+      error_callback: function (err) {
+        problem('Sign-in problem' + (err && err.type ? ' (' + err.type + ')' : '') + '. Go back to Opingo and try again.');
+      }
+    });
+    client.requestAccessToken({ prompt: '' });
+  }
+
+  if (!validState) {
+    problem('Open this page from the Opingo app: Settings, Spreadsheet, Use an existing sheet, Choose a shared sheet.');
+  } else if (PICKER_KEY.indexOf('PASTE_') === 0) {
+    problem('This page is not set up yet (the Picker key is missing).');
+  } else {
+    $('who').textContent = validHint ? 'Signing in as ' + validHint + '.' : 'Choose your Google account on the next screen.';
+    $('cancel').href = appLink('cancel');
+    $('again').onclick = function (e) { e.preventDefault(); show('start'); choose(); };
+    $('go').onclick = choose;
+    show('start');
+    loadGoogle();
+  }
+</script>
+</body>
+</html>
