@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "sheetUpdateMinutes": 30,
+  "sheetUpdateMinutes": 60,
   "updateNowRestMinutes": 5,
   "backoffCapSeconds": 64,
   "rowsPerRequest": 100
